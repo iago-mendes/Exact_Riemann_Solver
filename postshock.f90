@@ -176,6 +176,31 @@ subroutine velocity(unk1,unk2,ahead,switchLR,vx,Vs,switchPB,behind)
 
 
   select case(initial_data)
+  case (0)
+     ! User-defined problem. The built-in cases each carry a hand-tuned vx
+     ! bracket taken from an approximate (HLLE) solution; case 0 had none, so it
+     ! fell back to [-0.9, 0.9] and the root-find ran away to v^2 >= 1. Read the
+     ! bracket from VxGuess.txt instead so it can be seeded from our own
+     ! numerical mid-states without recompiling for every test.
+     !   line 1: vx xmin xmax   for the LEFT-going slow  (switchLR = 'LS')
+     !   line 2: vx xmin xmax   for the RIGHT-going slow (switchLR = 'RS')
+     block
+       real(DP)::g_vx_ls,g_lo_ls,g_hi_ls,g_vx_rs,g_lo_rs,g_hi_rs
+       logical::have
+       inquire(FILE='VxGuess.txt',EXIST=have)
+       if (have) then
+          open(UNIT=771,FILE='VxGuess.txt',STATUS='OLD',ACTION='READ')
+          read(771,*) g_vx_ls,g_lo_ls,g_hi_ls
+          read(771,*) g_vx_rs,g_lo_rs,g_hi_rs
+          close(771)
+          if (switchLR=='LS') then
+             vx=g_vx_ls; xmin=g_lo_ls; xmax=g_hi_ls
+          else if (switchLR=='RS') then
+             vx=g_vx_rs; xmin=g_lo_rs; xmax=g_hi_rs
+          end if
+       end if
+     end block
+
   case (13) 
      !For the generic Alfven test (from HLLE)
      if (switchLR=='LS') then
@@ -713,6 +738,8 @@ subroutine ContactVelocity(unk1,unk2,vxb,Vs,ahead,vx,switchLR,switchPB,solution)
   real(DP)::b2,pgas,wtot,leftAlfven,rightAlfven,cdvel,xmax,xmin,B2big,W2inv,eta,enthalpy
 
   real(DP)::step_min,ftol,cf !Minimum step allowed, accuracy and relaxation factor
+  real(DP)::cz_ls_lo,cz_rs_lo,cz_lf_lo,cz_rf_hi
+  logical::cz_have=.false.
 
   ftol=1.0e-10_dp !accuracy used in this subroutine
 
@@ -762,10 +789,31 @@ subroutine ContactVelocity(unk1,unk2,vxb,Vs,ahead,vx,switchLR,switchPB,solution)
   end if
 
 
+  ! --- case 0 (user-defined) contact-discontinuity bounds -----------------
+  ! Every built-in case carries hand-tuned bounds here, taken from an
+  ! approximate solution; case 0 had none and the author left "if
+  ! (initial_data==0) xmin=???" placeholders in all three branches. Without
+  ! them the bracketing picks the wrong root (more than one lies in the default
+  ! interval) or runs away to v^2 >= 1. Read them from CaseZeroBounds.txt so
+  ! they can be seeded per test from our own numerical mid-states:
+  !   line 1: LS xmin   line 2: RS xmin   line 3: LF xmin   line 4: RF xmax
+  ! Use 9.9e9 for "leave the default alone".
+  if (initial_data==0) then
+     inquire(FILE='CaseZeroBounds.txt',EXIST=cz_have)
+     if (cz_have) then
+        open(UNIT=773,FILE='CaseZeroBounds.txt',STATUS='OLD',ACTION='READ')
+        read(773,*) cz_ls_lo
+        read(773,*) cz_rs_lo
+        read(773,*) cz_lf_lo
+        read(773,*) cz_rf_hi
+        close(773)
+     end if
+  end if
+
   if (switchLR=='LF') then
      xmax=leftAlfven
      xmin=-0.9999999e0_dp
-     !if (initial_data==0) xmin=0.99 !for user defined Riemann problem (if needed)
+     if (cz_have .and. cz_lf_lo<9.0e9_dp) xmin=cz_lf_lo
   else if (switchLR=='LS') then
      xmax=cdvel
      xmin=leftAlfven
@@ -774,6 +822,7 @@ subroutine ContactVelocity(unk1,unk2,vxb,Vs,ahead,vx,switchLR,switchPB,solution)
      if (initial_data==13) xmin=-0.2e0_dp   !for test alfven 1
      if (initial_data==8)  xmin=0.02e0_dp   !for Balsara 1
      if (initial_data==11) xmin=-0.150e0_dp !for Balsara 4 
+     if (cz_have .and. cz_ls_lo<9.0e9_dp) xmin=cz_ls_lo
 
      !if (initial_data==0) xmin=???   !for user defined Riemann problem (if needed)
 
@@ -786,6 +835,8 @@ subroutine ContactVelocity(unk1,unk2,vxb,Vs,ahead,vx,switchLR,switchPB,solution)
      if (initial_data==8)  xmin=0.38e0_dp !for Balsara 1
      if (initial_data==11) xmax=0.16e0_dp !for Balsara 4
      if (initial_data==12) xmin=0.36e0_dp !for Balsara 5
+     if (cz_have .and. cz_rs_lo<9.0e9_dp) xmin=cz_rs_lo
+     if (cz_have .and. cz_rf_hi<9.0e9_dp) xmax=cz_rf_hi
      !if (initial_data==10) xmax=0.995e0_dp !for Balsara 4 !Only for Meliani EOS
      !if (initial_data==0) xmin=???   !for user defined Riemann problem (if needed)
 
