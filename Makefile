@@ -24,6 +24,8 @@ data:
 tar:
 	tar -czvf rmhd_riemann_solver.tgz $(SRCS) Makefile README RInput.txt
 
+.PHONY: all clean data tar run-test check-refs
+
 .SUFFIXES: $(SUFFIXES) .f90
 
 .f90.o:
@@ -31,5 +33,15 @@ tar:
 
 run-test:
 	printf "13\n1\n-2\n2\n1.5\n100\n1.0e-7\n1\n" | ./riemann_rmhd
+
+# Smoke test: solve built-in case 8 (Balsara 1) and diff it against the
+# author's published solution, on the constant states only.  This is the one
+# path through the solver with a known-correct expected answer; run it before
+# trusting anything the user-defined case (0) produces.  Add cases with
+# CHECK_CASES="--case 8 --case 9 --case 10".
+CHECK_CASES ?= --case 8
+
+check-refs: $(PROG)
+	./check_refs.py $(CHECK_CASES)
 
 # DO NOT DELETE

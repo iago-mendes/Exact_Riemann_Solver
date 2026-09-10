@@ -1,1 +1,5 @@
 /runs/
+*.o
+*.mod
+riemann_rmhd
+__pycache__/
