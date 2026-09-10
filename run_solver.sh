@@ -83,8 +83,16 @@ fi
 
 # solution.dat holds every solver iteration appended in turn; the last block is
 # the converged solution, which is what the published reference files contain.
-awk '/iteration number/ {n=""; next} /^[[:space:]]*#/ {next} NF {n = n $0 "\n"} END {printf "%s", n}' \
-    "$OUTDIR/solution.dat" > "$OUTDIR/solution_last.dat" 2>/dev/null || true
+# Two passes -- find the last iteration marker, then print what follows it --
+# rather than accumulating the block in a variable: at nx=20000 the block is
+# 26068 lines and mawk quietly produced an EMPTY file for the accumulating
+# version, which is the worst possible failure for a reference file.
+if [ -s "$OUTDIR/solution.dat" ]; then
+  awk 'FNR==NR {if (/iteration number/) last=NR; next}
+       FNR>last && !/^[[:space:]]*#/ && NF' \
+      "$OUTDIR/solution.dat" "$OUTDIR/solution.dat" \
+      > "$OUTDIR/solution_last.dat"
+fi
 
 echo "output: $OUTDIR"
 if [ "$status" -ne 0 ]; then
