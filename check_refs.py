@@ -42,7 +42,22 @@ CASES = {
     8: ("Balsara1", ["1", "-0.5", "0.5", "0.4", "1000", "1.0e-10", "1"]),
     9: ("Balsara2", ["1", "-0.5", "0.5", "0.4", "1000", "1.0e-10", "1"]),
     10: ("Balsara3", ["1", "-0.5", "0.5", "0.4", "1000", "1.0e-10", "1"]),
+    11: ("Balsara4", ["1", "-0.5", "0.5", "0.4", "100", "1.0e-10", "1"]),
+    # Balsara 5 is the one published case with a genuinely non-coplanar
+    # rotation, so it is the only entry here that makes the solver's 5x5
+    # Alfven Newton do real work -- see docs/exact-solver-alfven-system.md.
+    # It is also slow: it needs CHECK_REFS_TIMEOUT well above the 300 s
+    # default, which is why it is not in the default CHECK_CASES.
+    12: ("Balsara5_psi", ["1", "-0.5", "0.5", "0.55", "1000", "1.0e-10", "1"]),
+    # Case 13, the generic Alfven test, is DELIBERATELY ABSENT.  initialdata.f90
+    # gives it gamma = 5/3, while the reference run's own RInput.txt, shipped
+    # beside the published solution, says 1.6666.  That 4e-5 difference moves
+    # the intermediate total pressure by 2.1e-5 and looks exactly like a solver
+    # defect; with gamma = 1.6666 the solver reproduces the reference to
+    # 1.0e-12.  Adding it here means overriding gamma first.
 }
+# Cases 12 and 13 solve in minutes, not seconds; raise this for them.
+TIMEOUT = int(os.environ.get("CHECK_REFS_TIMEOUT", "300"))
 COLUMNS = ["rho", "ptot", "vx", "vy", "vz", "By", "Bz"]
 
 
@@ -90,7 +105,7 @@ def compare(ref, new):
 def run_case(case, outdir):
     answers = [str(case)] + CASES[case][1]
     p = subprocess.run([os.path.join(HERE, "run_solver.sh"), "-o", outdir,
-                        *answers], capture_output=True, text=True, timeout=300)
+                        *answers], capture_output=True, text=True, timeout=TIMEOUT)
     got = os.path.join(outdir, "solution_last.dat")
     if p.returncode != 0 or not os.path.exists(got) or os.path.getsize(got) == 0:
         raise SystemExit(f"check_refs: case {case} did not produce a solution\n"
