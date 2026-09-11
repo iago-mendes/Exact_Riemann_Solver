@@ -157,6 +157,9 @@ subroutine velocity(unk1,unk2,ahead,switchLR,vx,Vs,switchPB,behind)
   integer(I4B)::j
   logical::upperbound,lowerbound
   real(DP),dimension(7)::plotstate
+  !the bracket check
+  real(DP)::f_lo,f_hi,Vs_lo,Vs_hi
+  logical::def_lo,def_hi,probed
 
   !This routine is needed only if you use the norm of Bt
   if (switchPB=='P') stop 'postshock.f90: velocity: it has no sense to use this routine with the p-method'
@@ -338,13 +341,55 @@ subroutine velocity(unk1,unk2,ahead,switchLR,vx,Vs,switchPB,behind)
   !-------------------------------------------------------------------------------------!
 
 
+    !--------------------------------------!
+    !Check the bracket BEFORE iterating in it!
+    !--------------------------------------!
+    ! The first thing a bracketed root finder should do is check its bracket.
+    ! This one never did.  [xmin,xmax] is used purely as a SEARCH DOMAIN: the
+    ! loop below starts at vxinit, walks outwards looking for a sub-interval
+    ! across which f changes sign, and only then runs Newton-bisection on it.
+    ! When the walk finds nothing it halves its step until it underflows and
+    ! executes 'stop error in velocity' -- after minutes of searching, naming
+    ! neither the interval, nor f, nor which of the two nested brackets was
+    ! wrong.  Evaluating the two endpoints once costs two calls against the
+    ! thousands the walk makes, and settles the question immediately.
+    !
+    ! f is undefined on parts of the domain (wave_error), so the test is only
+    ! conclusive when both ends are defined; when they are, a same-sign pair
+    ! means no root of this equation lies in the interval and the walk is
+    ! guaranteed to fail.  Say so now instead of in three minutes.
+    ! Only case (0) is checked up front.  The built-in cases carry brackets the
+    ! author hand-tuned against a known solution, so there is nothing to catch
+    ! there, and probing the ends costs real time: the endpoint of a wide
+    ! built-in bracket sits where the INNER root find has no root, so each
+    ! probe pays that search out to its step underflow.  Measured on
+    ! 'make check-refs' for cases 8, 9 and 10: 36 s without the probe, 139 s
+    ! with it on every case, 36 s with it on case (0) only.  On the failure
+    ! path the ends are probed anyway, inside bracket_report, where the time
+    ! no longer matters.
+    probed=.false.
+    if (initial_data==0) then
+       call probe_ends
+       if (def_lo.AND.def_hi.AND.(abs(f_lo)>ftol).AND.(abs(f_hi)>ftol) &
+            .AND.((f_lo*f_hi)>0.0e0_dp)) then
+          call bracket_report('the supplied v^x interval does not bracket a root')
+          stop 'velocity: the v^x bracket does not contain a root'
+       end if
+    end if
+
     !-----------------------!
     !Bracketing the solution!
     !-----------------------!
+    ! Both flags are read at the top of the loop below and were never set
+    ! before it; on a compiler that does not happen to zero the stack this
+    ! read is undefined.
+    upperbound=.false.
+    lowerbound=.false.
 2   if(upperbound .and. lowerbound) then
        step=step/2.0e0_dp
        if (step<step_min) then !STEP TOO SMALL
           wave_error=.true.
+          call bracket_report('no sign change found anywhere in the interval')
           stop 'error in velocity'
           !return
        end if
@@ -416,6 +461,7 @@ subroutine velocity(unk1,unk2,ahead,switchLR,vx,Vs,switchPB,behind)
              step=step/2.0e0_dp
              if (step<step_min) then !STEP TOO SMALL
                 wave_error=.true.
+                call bracket_report('no sign change found anywhere in the interval')
                 stop 'error in velocity'                
                 return
              end if
@@ -521,6 +567,120 @@ subroutine velocity(unk1,unk2,ahead,switchLR,vx,Vs,switchPB,behind)
 
 1000 if (present(behind)) call postshock(Vs,unk1,unk2,vx,ahead,behind)
 
+
+contains
+
+  subroutine probe_ends
+    ! Evaluate the residual at both ends of the interval.  f is undefined on
+    ! parts of the domain (wave_error), so record whether each end is defined:
+    ! only a pair that is defined at BOTH ends can be judged by its signs.
+    implicit none
+    if (probed) return
+    wave_error=.false.
+    call velocity_eqn(unk1,unk2,ahead,xmin,switchLR,f_lo,Vs_lo)
+    def_lo=.NOT.(wave_error)
+    wave_error=.false.
+    call velocity_eqn(unk1,unk2,ahead,xmax,switchLR,f_hi,Vs_hi)
+    def_hi=.NOT.(wave_error)
+    wave_error=.false.
+    probed=.true.
+  end subroutine probe_ends
+
+  subroutine bracket_report(why)
+    ! Everything a reader needs to tell the two nested brackets apart.
+    ! velocity() solves for v^x behind a slow wave with the bracket in
+    ! VxGuess.txt (case 0) or hand-tuned above (built-in cases); each of its
+    ! residual evaluations runs ContactVelocity, which solves for the SHOCK
+    ! SPEED with the bracket in CaseZeroBounds.txt (case 0) or hand-tuned at
+    ! postshock.f90 'case 0 contact-discontinuity bounds'.  When the inner one
+    ! fails it returns wave_error, which the outer walk cannot tell from "f is
+    ! undefined here" -- so a wrong CaseZeroBounds.txt surfaces as 'error in
+    ! velocity', naming the wrong unknown.  Print both.
+    implicit none
+    character(len=*),intent(IN)::why
+    character(len=2)::i_switch
+    real(DP)::i_xmin,i_xmax,i_fmin,i_fmax
+    logical::i_def_min,i_def_max
+    integer(I4B)::i_nosign,i_searchfail
+    ! Snapshot the inner root find's last record FIRST: probing the ends below
+    ! runs ContactVelocity again and would overwrite exactly the evidence this
+    ! report exists to print.
+    i_switch=cv_switch
+    i_xmin=cv_xmin
+    i_xmax=cv_xmax
+    i_fmin=cv_fmin
+    i_fmax=cv_fmax
+    i_def_min=cv_def_min
+    i_def_max=cv_def_max
+    i_nosign=cv_nosign
+    i_searchfail=cv_searchfail
+    call probe_ends
+    print *
+    print *,'==============================================================='
+    print *,'postshock.f90: velocity: ',why
+    print *,'  wave                = ',switchLR
+    print *,'  initial_data        = ',initial_data
+    print *,'  v^x interval [xmin,xmax] = ',xmin,xmax
+    print *,'  initial guess vxinit     = ',vxinit
+    print *,'  search step, step_min    = ',step,step_min
+    if (def_lo) then
+       print *,'  f(xmin)             = ',f_lo
+    else
+       print *,'  f(xmin)               undefined (wave_error)'
+    end if
+    if (def_hi) then
+       print *,'  f(xmax)             = ',f_hi
+    else
+       print *,'  f(xmax)               undefined (wave_error)'
+    end if
+    if (def_lo.AND.def_hi) then
+       if ((f_lo*f_hi)>0.0e0_dp) then
+          print *,'  -> f has the SAME SIGN at both ends: no root in there.'
+       else
+          print *,'  -> f does change sign across the interval, so a root is'
+          print *,'     in there and the failure is not the outer bracket.'
+       end if
+    else
+       print *,'  -> f is undefined at an end, so the interval cannot be'
+       print *,'     judged by its endpoints; look at the inner bracket.'
+    end if
+    if (initial_data==0) then
+       print *,'  this bracket comes from VxGuess.txt, line 1 = LS,'
+       print *,'  line 2 = RS, each "vx xmin xmax".'
+    else
+       print *,'  this bracket is hand-tuned in postshock.f90, subroutine'
+       print *,'  velocity, select case(initial_data).'
+    end if
+    print *
+    print *,'  INNER root find (ContactVelocity, the shock speed) -- last call:'
+    print *,'    wave                   = ',i_switch
+    print *,'    speed interval         = ',i_xmin,i_xmax
+    if (i_def_min) then
+       print *,'    f(xmin)              = ',i_fmin
+    else
+       print *,'    f(xmin)                undefined'
+    end if
+    if (i_def_max) then
+       print *,'    f(xmax)              = ',i_fmax
+    else
+       print *,'    f(xmax)                undefined'
+    end if
+    print *,'    same-sign endpoint pairs seen = ',i_nosign
+    print *,'    interval searches that failed = ',i_searchfail
+    if (i_nosign>0) then
+       print *,'    -> the INNER bracket excluded its root at least once.'
+       if (initial_data==0) then
+          print *,'       Its lower bound is CaseZeroBounds.txt line 1 (LS),'
+          print *,'       line 2 (RS), line 3 (LF); line 4 is the RF upper'
+          print *,'       bound.  9.9e9 means "keep the built-in default",'
+          print *,'       and the LS/RS default lower bound is the ALFVEN'
+          print *,'       speed, which for a weak slow wave already sits'
+          print *,'       above the slow root -- so the default excludes it.'
+       end if
+    end if
+    print *,'==============================================================='
+    print *
+  end subroutine bracket_report
 
 end subroutine velocity
 
@@ -853,6 +1013,11 @@ subroutine ContactVelocity(unk1,unk2,vxb,Vs,ahead,vx,switchLR,switchPB,solution)
 
   call zeroeqn(vxb,unk1,unk2,xmax,ahead,f,df,switchLR,switchPB,errcheck)
   if (veryverbose) print *,'ContactVelocity: f(xmax)=',f,'xmax=',xmax,'errcheck=',errcheck
+  cv_switch=switchLR
+  cv_xmin=xmin
+  cv_xmax=xmax
+  cv_fmax=f
+  cv_def_max=.NOT.(errcheck)
   if ((abs(f)<=ftol).AND.(.NOT.(errcheck))) then
      Vs=xmax
      write(*,*) vxb,unk1,unk2,xmax,ahead,f,df,switchLR,switchPB,errcheck
@@ -862,6 +1027,17 @@ subroutine ContactVelocity(unk1,unk2,vxb,Vs,ahead,vx,switchLR,switchPB,solution)
   end if
   call zeroeqn(vxb,unk1,unk2,xmin,ahead,f,df,switchLR,switchPB,errcheck)
   if (veryverbose) print *,'ContactVelocity: f(xmin)=',f ,'xmin=',xmin,'errcheck=',errcheck
+  cv_fmin=f
+  cv_def_min=.NOT.(errcheck)
+  ! The bracket check the author never made.  These are the only two numbers a
+  ! sign-change test needs and they were computed and discarded.  It is only
+  ! RECORDED here, never acted on: this interval is a search domain, its ends
+  ! move with the trial vxb, and more than one root can lie inside it -- which
+  ! is exactly why every built-in case carries a hand-tuned xmin.  A same-sign
+  ! pair is therefore evidence, not proof.  velocity() prints it when it gives
+  ! up, so the fatal message finally names the bracket that actually failed.
+  if (cv_def_min.AND.cv_def_max.AND.(cv_fmin*cv_fmax>0.0e0_dp)) &
+       cv_nosign=cv_nosign+1
   if ((abs(f)<=ftol).AND.(.NOT.(errcheck))) then
      Vs=xmin
      write(*,*) vxb,unk1,unk2,xmin,ahead,f,df,switchLR,switchPB,errcheck
@@ -936,6 +1112,7 @@ subroutine ContactVelocity(unk1,unk2,vxb,Vs,ahead,vx,switchLR,switchPB,solution)
      step=step/2.0e0_dp
      if (step<step_min) then !STEP TOO SMALL
         wave_error=.true.
+        cv_searchfail=cv_searchfail+1
         !rarefaction_pmin=ahead(2)
         shock=.true.
         return
@@ -1010,6 +1187,7 @@ subroutine ContactVelocity(unk1,unk2,vxb,Vs,ahead,vx,switchLR,switchPB,solution)
            step=step/2.0e0_dp
            if (step<step_min) then !STEP TOO SMALL
               wave_error=.true.
+              cv_searchfail=cv_searchfail+1
               !rarefaction_pmin=ahead(2)
               shock=.true.
               return

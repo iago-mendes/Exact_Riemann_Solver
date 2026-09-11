@@ -40,6 +40,20 @@ module wavecheck
   implicit none
   logical::wave_error,shock
   !real(DP)::rarefaction_pmin
+
+  ! --- bracket bookkeeping -----------------------------------------------
+  ! ContactVelocity already evaluates its residual at BOTH ends of the
+  ! shock-speed interval it is handed, and throws the two values away without
+  ! ever comparing their signs.  They are kept here instead, so that when the
+  ! outer root find in velocity() gives up it can say which inner bracket was
+  ! at fault: the fatal message names the outer unknown (v^x), while the cause
+  ! is normally the inner one (the shock speed).
+  character(len=2)::cv_switch='  '                 !wave of the last record
+  real(DP)::cv_xmin=0.0e0_dp,cv_xmax=0.0e0_dp      !its shock-speed interval
+  real(DP)::cv_fmin=0.0e0_dp,cv_fmax=0.0e0_dp      !residual at the two ends
+  logical::cv_def_min=.false.,cv_def_max=.false.   !defined there?
+  integer(I4B)::cv_nosign=0     !times both ends were defined and same-signed
+  integer(I4B)::cv_searchfail=0 !times the interval search underflowed
 end module wavecheck
 
 module output_grid
