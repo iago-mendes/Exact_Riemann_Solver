@@ -48,8 +48,12 @@ CASES = {
     # Balsara 5 is the one published case with a genuinely non-coplanar
     # rotation, so it is the only entry here that makes the solver's 5x5
     # Alfven Newton do real work -- see docs/exact-solver-alfven-system.md.
-    # It is also slow: it needs CHECK_REFS_TIMEOUT well above the 300 s
-    # default, which is why it is not in the default CHECK_CASES.
+    # MEASURED 2026-09-11: at the published parameters below it does NOT
+    # converge in 2400 s; it had emitted one iteration block after 40 minutes.
+    # So it is not a usable oracle as it stands, and it is deliberately out of
+    # the default CHECK_CASES.  Left here, with the timeout override, because
+    # it is the entry someone will reach for when the Alfven path needs a
+    # check; they should know the cost before starting.
     12: ("Balsara5_psi", ["1", "-0.5", "0.5", "0.55", "1000", "1.0e-10", "1"]),
     # Case 13, the generic Alfven test, is DELIBERATELY ABSENT.  initialdata.f90
     # gives it gamma = 5/3, while the reference run's own RInput.txt, shipped
