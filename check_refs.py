@@ -23,9 +23,11 @@ Exit status is 0 only if every constant state of every case agrees to --tol.
 import argparse
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import types
 
 import numpy as np
 
@@ -104,8 +106,22 @@ def compare(ref, new):
 
 def run_case(case, outdir):
     answers = [str(case)] + CASES[case][1]
-    p = subprocess.run([os.path.join(HERE, "run_solver.sh"), "-o", outdir,
-                        *answers], capture_output=True, text=True, timeout=TIMEOUT)
+    # Own process group, and kill the group on a timeout.  subprocess.run's
+    # timeout kills only the direct child, run_solver.sh; the solver it exec'd
+    # is a grandchild and survives -- a timed-out case left a riemann_rmhd
+    # running for half an hour on a deleted temporary directory.
+    p = subprocess.Popen([os.path.join(HERE, "run_solver.sh"), "-o", outdir,
+                          *answers], stdout=subprocess.PIPE,
+                         stderr=subprocess.PIPE, text=True,
+                         start_new_session=True)
+    try:
+        out, err = p.communicate(timeout=TIMEOUT)
+    except subprocess.TimeoutExpired:
+        os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+        p.communicate()
+        raise SystemExit(f"check_refs: case {case} timed out after {TIMEOUT} s "
+                         f"(raise CHECK_REFS_TIMEOUT)")
+    p = types.SimpleNamespace(returncode=p.returncode, stdout=out, stderr=err)
     got = os.path.join(outdir, "solution_last.dat")
     if p.returncode != 0 or not os.path.exists(got) or os.path.getsize(got) == 0:
         raise SystemExit(f"check_refs: case {case} did not produce a solution\n"
